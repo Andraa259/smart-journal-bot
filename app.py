@@ -18,26 +18,44 @@ st.markdown("""
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def get_ai_response(text, style, major, temp):
-    system_prompt = f"Anda pakar parafrase {major}. Ubah teks ke gaya {style}. Variasikan struktur kalimat (burstiness tinggi) dan hindari kata klise AI. Hasil harus sangat natural dalam Bahasa Indonesia."
-    variations = []
-    for _ in range(3):
-        chat_completion = client.chat.completions.create(
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text}],
-            model="llama-3.3-70b-versatile",
-            temperature=temp,
-        )
-        variations.append(chat_completion.choices[0].message.content)
-    return variations
+    # Tambahkan instruksi "Ringkas" dan "Jangan bertele-tele"
+    system_prompt = f"""
+    Anda pakar parafrase {major}. 
+    TUGAS UTAMA: Ubah teks ke gaya {style} TANPA menambah jumlah kalimat secara signifikan.
+    ATURAN KETAT:
+    1. Jika input 3 kalimat, hasil harus sekitar 3 kalimat.
+    2. Jangan gunakan kata-kata hiasan yang tidak perlu.
+    3. Fokus pada pengubahan struktur kalimat (active ke passive atau sebaliknya).
+    4. Hindari pengulangan makna. 
+    5. Hasil harus padat, berisi, dan natural.
+    """
+    variations = []
+    for _ in range(3):
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text}],
+            model="llama-3.3-70b-versatile",
+            temperature=temp,
+        )
+        variations.append(chat_completion.choices[0].message.content)
+    return variations
 
 def mix_ai_logic(selected_texts, major):
-    combined = " --- ".join(selected_texts)
-    prompt = f"Gabungkan (mix) teks-teks berikut menjadi satu paragraf yang utuh, mengalir secara logis, dan sangat manusiawi untuk bidang {major}. Pastikan tidak ada pengulangan ide."
-    chat_completion = client.chat.completions.create(
-        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": combined}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.7,
-    )
-    return chat_completion.choices[0].message.content
+    combined = " --- ".join(selected_texts)
+    # Tambahkan instruksi "Eliminasi redundansi"
+    prompt = f"""
+    Gabungkan teks-teks berikut menjadi satu paragraf utuh untuk bidang {major}.
+    ATURAN KRUSIAL:
+    1. JANGAN mengulang ide yang sama.
+    2. JANGAN membuat teks menjadi lebih panjang dari rata-rata teks sumber.
+    3. Ambil struktur kalimat yang paling unik dari setiap opsi.
+    4. Pastikan hasil akhirnya ringkas, padat, dan tidak bertele-tele.
+    """
+    chat_completion = client.chat.completions.create(
+        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": combined}],
+        model="llama-3.3-70b-versatile",
+        temperature=0.7,
+    )
+    return chat_completion.choices[0].message.content
 
 def send_telegram(text, hir, catatan):
     token = st.secrets["TELEGRAM_BOT_TOKEN"]
