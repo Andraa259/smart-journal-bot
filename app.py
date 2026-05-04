@@ -30,25 +30,24 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 HF_TOKEN = st.secrets["HF_API_KEY"]
 
 def query_deberta(text):
-    """Memanggil model DeBERTa-v3-Large via Hugging Face Inference API."""
     API_URL = "https://api-inference.huggingface.co/models/Hello-SimpleAI/chatgpt-detector-roberta"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    headers = {"Authorization": f"Bearer {st.secrets['HF_API_KEY']}"}
     try:
-        # Timeout ditambahkan untuk menangani cold start
         response = requests.post(API_URL, headers=headers, json={"inputs": text}, timeout=20)
-        result = response.json()
         
-        # Jika model sedang loading (Cold Start)
-        if isinstance(result, dict) and "estimated_time" in result:
-            st.warning(f"Model sedang loading... Siap dalam {result['estimated_time']:.0f} detik.")
+        # JIKA ERROR, TAMPILKAN DI UI BIAR KELIHATAN
+        if response.status_code != 200:
+            st.error(f"HF Error {response.status_code}: {response.text}")
             return None
             
+        result = response.json()
         if isinstance(result, list) and len(result) > 0:
             for item in result[0]:
                 if item['label'].upper() in ['AI', 'FAKE', 'LABEL_1']:
                     return item['score'] * 100
         return 0
     except Exception as e:
+        st.error(f"Connection Error: {str(e)}")
         return None
 
 def get_ai_response(text, style, major, temp, feedback_note=""):
