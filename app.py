@@ -27,7 +27,7 @@ def get_ai_response(text, style, major, temp):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Parafrasekan teks ini: {text}"}
             ],
-            model="llama3-70b-8192", # Versi paling pintar
+            model="llama-3.3-70b-versatile", # Versi paling pintar
             temperature=temp,
         )
         variations.append(chat_completion.choices[0].message.content)
