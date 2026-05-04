@@ -1,107 +1,140 @@
 import streamlit as st
 from groq import Groq
 from Levenshtein import ratio
+import requests
 
 # 1. KONFIGURASI HALAMAN
-st.set_page_config(page_title="AI Humanizer & Paraphraser", layout="wide")
+st.set_page_config(page_title="AI Humanizer Pro", layout="wide")
 
-# 2. INISIALISASI CLIENT GROQ
-# Kita mengambil API Key dari Secret Streamlit (untuk keamanan)
+# CSS untuk tampilan mobile
+st.markdown("""
+    <style>
+    .stTextArea textarea { font-size: 14px !important; }
+    @media (max-width: 640px) { .stActionButton { width: 100%; } }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 2. INISIALISASI CLIENT
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def get_ai_response(text, style, major, temp):
-    # Prompt dinamis berdasarkan input user
-    system_prompt = f"""
-    Anda adalah asisten ahli parafrase untuk bidang {major}.
-    Tugas Anda adalah menulis ulang teks agar memiliki gaya {style}.
-    Gunakan kalimat dengan panjang yang bervariasi (burstiness tinggi).
-    Hindari kata-kata klise AI seperti 'perlu diingat', 'komprehensif', atau 'signifikan'.
-    Tuliskan hasil dalam Bahasa Indonesia yang sangat natural.
-    """
-    
-    # Meminta 3 variasi (kita panggil 3 kali untuk variasi maksimal)
+    system_prompt = f"Anda pakar parafrase {major}. Ubah teks ke gaya {style}. Variasikan struktur kalimat (burstiness tinggi) dan hindari kata klise AI. Hasil harus sangat natural dalam Bahasa Indonesia."
     variations = []
     for _ in range(3):
         chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Parafrasekan teks ini: {text}"}
-            ],
-            model="llama-3.3-70b-versatile", # Versi paling pintar
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text}],
+            model="llama-3.3-70b-versatile",
             temperature=temp,
         )
         variations.append(chat_completion.choices[0].message.content)
     return variations
 
-# 3. ANTARMUKA PENGGUNA (UI)
-st.title("🛡️ AI Humanizer: Style Transfer & Mixer")
-st.markdown("Ubah draf AI menjadi tulisan manusia yang unik untuk menghindari deteksi AI.")
+def mix_ai_logic(selected_texts, major):
+    combined = " --- ".join(selected_texts)
+    prompt = f"Gabungkan (mix) teks-teks berikut menjadi satu paragraf yang utuh, mengalir secara logis, dan sangat manusiawi untuk bidang {major}. Pastikan tidak ada pengulangan ide."
+    chat_completion = client.chat.completions.create(
+        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": combined}],
+        model="llama-3.3-70b-versatile",
+        temperature=0.7,
+    )
+    return chat_completion.choices[0].message.content
+
+# FUNGSI TELEGRAM (DIPERBARUI DENGAN PARAMETER JUDUL)
+def send_telegram(text, hir, catatan):
+    token = st.secrets["TELEGRAM_BOT_TOKEN"]
+    chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+    
+    # Format pesan yang dikirim
+    header = f"📌 **JUDUL/CATATAN:** {catatan if catatan else 'Tanpa Judul'}\n"
+    stats = f"📊 **HIR Score:** {hir:.1f}%\n"
+    isi = f"\n📝 **TEKS:**\n{text}"
+    
+    pesan_lengkap = f"📩 **HASIL AI HUMANIZER**\n\n{header}{stats}{isi}"
+    
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": pesan_lengkap, "parse_mode": "Markdown"}
+    return requests.post(url, data=payload)
+
+# 3. UI UTAMA
+st.title("🛡️ AI Humanizer: Mixer Edition")
 
 with st.sidebar:
     st.header("⚙️ Pengaturan")
-    major = st.text_input("Jurusan/Bidang Ilmu:", "Psikologi & IT")
-    style = st.selectbox("Gaya Bahasa:", 
-                         ["Formal Akademik", "Kritis & Tajam", "Naratif & Mengalir", "Percakapan Santai"])
-    temp = st.slider("Tingkat Kreativitas (Temperature)", 0.5, 1.0, 0.8)
-    st.info("Tips: Semakin tinggi kreativitas, semakin acak pola kalimatnya.")
+    major = st.text_input("Jurusan:", "Psikologi & IT")
+    style = st.selectbox("Gaya:", ["Formal Akademik", "Kritis & Tajam", "Naratif", "Percakapan Santai"])
+    temp = st.slider("Kreativitas", 0.5, 1.0, 0.8)
 
-# Layout Kolom Input
-user_input = st.text_area("Tempel Teks Asli AI di Sini:", height=200, placeholder="Masukkan paragraf dari ChatGPT...")
+user_input = st.text_area("Tempel Teks AI Asli:", height=200)
 
-if st.button("Proses & Buat 3 Variasi"):
-    if user_input.strip() == "":
-        st.error("Isi dulu teksnya, ya!")
-    else:
-        with st.spinner("Llama sedang meracik kata..."):
+if st.button("🚀 Buat 3 Variasi"):
+    if user_input.strip():
+        with st.spinner("Meracik variasi..."):
             st.session_state['results'] = get_ai_response(user_input, style, major, temp)
-            st.session_state['original_input'] = user_input
+    else:
+        st.error("Isi teks dulu!")
 
-# 4. TAHAP MIX & MATCH (HUMAN-IN-THE-LOOP)
+# 4. TAHAP VARIASI & MIXING
 if 'results' in st.session_state:
-    st.subheader("Pilih & Gabungkan Hasil")
-    col1, col2, col3 = st.columns(3)
-    
+    st.subheader("📋 Hasil Variasi")
     res = st.session_state['results']
     
-    with col1:
-        st.markdown("**Variasi 1**")
-        st.caption(res[0][:150] + "...")
-        if st.button("Pakai Opsi 1"): st.session_state['master'] = res[0]
-            
-    with col2:
-        st.markdown("**Variasi 2**")
-        st.caption(res[1][:150] + "...")
-        if st.button("Pakai Opsi 2"): st.session_state['master'] = res[1]
-            
-    with col3:
-        st.markdown("**Variasi 3**")
-        st.caption(res[2][:150] + "...")
-        if st.button("Pakai Opsi 3"): st.session_state['master'] = res[2]
+    select_1 = st.checkbox("Pilih Variasi 1", value=True)
+    st.info(res[0])
+    
+    select_2 = st.checkbox("Pilih Variasi 2")
+    st.info(res[1])
+    
+    select_3 = st.checkbox("Pilih Variasi 3")
+    st.info(res[2])
+
+    st.divider()
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🪄 Mix Pilihan"):
+            selected = [res[i] for i, sel in enumerate([select_1, select_2, select_3]) if sel]
+            if len(selected) >= 2:
+                with st.spinner("Menggabungkan variasi..."):
+                    st.session_state['master'] = mix_ai_logic(selected, major)
+            else:
+                st.warning("Pilih minimal 2 variasi untuk di-mix!")
+                
+    with c2:
+        if st.button("🤖 Auto-Mix Semua"):
+            with st.spinner("Mixing 3 variasi otomatis..."):
+                st.session_state['master'] = mix_ai_logic(res, major)
 
     st.divider()
 
-    # 5. MASTER EDITOR & HIR CALCULATION
+    # 5. MASTER EDITOR & HIR
     st.subheader("🛠️ Master Editor")
-    final_text = st.text_area("Edit manual di sini untuk menaikkan HIR Score:", 
+    final_text = st.text_area("Edit manual hasil mix di sini:", 
                               value=st.session_state.get('master', ""), 
                               height=300)
 
-    # Logika HIR Score menggunakan Levenshtein Distance
-    # Membandingkan draf pilihan AI dengan hasil editan akhir manusia
     if 'master' in st.session_state:
-        # Menghitung seberapa banyak perubahan yang dilakukan user
-        diff_ratio = (1 - ratio(st.session_state['master'], final_text)) * 100
-        # Kita batasi maksimal 100%
-        hir_score = min(diff_ratio * 2.5, 100.0) # Pengali 2.5 agar perubahan kecil tetap dihargai
-        
+        # Kalkulasi HIR Score
+        hir_score = min((1 - ratio(st.session_state['master'], final_text)) * 250, 100.0)
         st.metric("Human-Input Ratio (HIR)", f"{hir_score:.1f}%")
         st.progress(hir_score / 100)
-        
-        if hir_score < 20:
-            st.warning("HIR Rendah: Tambahkan beberapa kalimat atau ubah diksi agar tidak terdeteksi.")
-        elif hir_score < 50:
-            st.info("HIR Sedang: Sudah cukup baik, tapi satu atau dua perubahan lagi akan lebih aman.")
-        else:
-            st.success("HIR Tinggi: Tulisan ini sudah memiliki 'sidik jari' manusia yang kuat!")
 
-    st.download_button("Simpan Hasil Akhir (.txt)", final_text, file_name="hasil_humanizer.txt")
+        st.subheader("📤 Kirim Hasil")
+        
+        # FITUR COPY (DENGAN ST.CODE)
+        st.write("Klik ikon copy di bawah:")
+        st.code(final_text, language=None)
+        
+        # --- TAMBAHAN KOLOM KETERANGAN/JUDUL ---
+        catatan_user = st.text_input("Judul atau Keterangan Tambahan (untuk Telegram):", 
+                                    placeholder="Contoh: Tugas Akhir Psikologi - Draf 1")
+        
+        if st.button("✈️ Kirim ke Telegram"):
+            if final_text.strip():
+                with st.spinner("Mengirim..."):
+                    response = send_telegram(final_text, hir_score, catatan_user)
+                    if response.status_code == 200:
+                        st.success("Berhasil dikirim ke Telegram!")
+                    else:
+                        st.error("Gagal kirim. Cek Secrets Telegram kamu.")
+            else:
+                st.error("Teks masih kosong!")
