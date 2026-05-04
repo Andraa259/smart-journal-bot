@@ -31,7 +31,7 @@ HF_TOKEN = st.secrets["HF_API_KEY"]
 
 def query_deberta(text):
     """Memanggil model DeBERTa-v3-Large via Hugging Face Inference API."""
-    API_URL = "https://api-inference.huggingface.co/models/Duskfall77/deberta-v3-large-ai-detector"
+    API_URL = "https://api-inference.huggingface.co/models/mrm8488/deberta-v3-large-finetuned-fake-news"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     try:
         # Timeout ditambahkan untuk menangani cold start
