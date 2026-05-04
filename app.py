@@ -39,12 +39,10 @@ def mix_ai_logic(selected_texts, major):
     )
     return chat_completion.choices[0].message.content
 
-# FUNGSI TELEGRAM (DIPERBARUI DENGAN PARAMETER JUDUL)
 def send_telegram(text, hir, catatan):
     token = st.secrets["TELEGRAM_BOT_TOKEN"]
     chat_id = st.secrets["TELEGRAM_CHAT_ID"]
     
-    # Format pesan yang dikirim
     header = f"📌 **JUDUL/CATATAN:** {catatan if catatan else 'Tanpa Judul'}\n"
     stats = f"📊 **HIR Score:** {hir:.1f}%\n"
     isi = f"\n📝 **TEKS:**\n{text}"
@@ -112,29 +110,38 @@ if 'results' in st.session_state:
                               value=st.session_state.get('master', ""), 
                               height=300)
 
+    # --- TAMBAHAN INFO KARAKTER ---
+    char_count = len(final_text)
+    if char_count > 4096:
+        st.error(f"⚠️ Karakter: **{char_count}** / 4096 - **Batas Terlampaui!** Pesan akan gagal kirim ke Telegram.")
+    elif char_count > 3800:
+        st.warning(f"📏 Karakter: **{char_count}** / 4096 - **Hampir Penuh.**")
+    else:
+        st.caption(f"📏 Karakter: **{char_count}** / 4096")
+
     if 'master' in st.session_state:
-        # Kalkulasi HIR Score
         hir_score = min((1 - ratio(st.session_state['master'], final_text)) * 250, 100.0)
         st.metric("Human-Input Ratio (HIR)", f"{hir_score:.1f}%")
         st.progress(hir_score / 100)
 
         st.subheader("📤 Kirim Hasil")
         
-        # FITUR COPY (DENGAN ST.CODE)
         st.write("Klik ikon copy di bawah:")
         st.code(final_text, language=None)
         
-        # --- TAMBAHAN KOLOM KETERANGAN/JUDUL ---
         catatan_user = st.text_input("Judul atau Keterangan Tambahan (untuk Telegram):", 
-                                    placeholder="Contoh: Tugas Akhir Psikologi - Draf 1")
+                                    placeholder="Contoh: Revisi Bab 1")
         
         if st.button("✈️ Kirim ke Telegram"):
             if final_text.strip():
-                with st.spinner("Mengirim..."):
-                    response = send_telegram(final_text, hir_score, catatan_user)
-                    if response.status_code == 200:
-                        st.success("Berhasil dikirim ke Telegram!")
-                    else:
-                        st.error("Gagal kirim. Cek Secrets Telegram kamu.")
+                if char_count <= 4096:
+                    with st.spinner("Mengirim..."):
+                        response = send_telegram(final_text, hir_score, catatan_user)
+                        if response.status_code == 200:
+                            st.success("Berhasil dikirim ke Telegram!")
+                        else:
+                            st.error("Gagal kirim. Cek Secrets Telegram kamu.")
+                else:
+                    st.error("Teks terlalu panjang untuk Telegram! Kurangi hingga di bawah 4096 karakter.")
             else:
                 st.error("Teks masih kosong!")
