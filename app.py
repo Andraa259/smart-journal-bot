@@ -2,165 +2,211 @@ import streamlit as st
 from groq import Groq
 from Levenshtein import ratio
 import requests
+import re
+import math
+import time
 
-# 1. KONFIGURASI HALAMAN
-st.set_page_config(page_title="AI Humanizer Pro", layout="wide")
+# 1. KONFIGURASI & STYLE
+st.set_page_config(page_title="AI Humanizer Elite v3.1", layout="wide", page_icon="🛡️")
 
-# CSS untuk tampilan mobile
 st.markdown("""
-    <style>
-    .stTextArea textarea { font-size: 14px !important; }
-    @media (max-width: 640px) { .stActionButton { width: 100%; } }
-    </style>
-    """, unsafe_allow_html=True)
+    <style>
+    .stTextArea textarea { font-size: 14px !important; }
+    .metric-card {
+        padding: 20px;
+        border-radius: 12px;
+        color: white;
+        text-align: center;
+        margin-bottom: 10px;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
+    }
+    @media (max-width: 640px) { .stActionButton { width: 100%; } }
+    </style>
+    """, unsafe_allow_html=True)
 
-# 2. INISIALISASI CLIENT
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-def get_ai_response(text, style, major, temp):
-    # Prompt "Radikal" untuk meningkatkan Perplexity dan Burstiness
-    system_prompt = f"""
-    Anda adalah pakar penulisan kreatif di bidang {major}. 
-    TUGAS: Lakukan rekonstruksi total teks berikut menjadi gaya {style}.
-    
-    ATURAN ANTI-DETEKSI AI:
-    1. RESTRUKTURISASI RADIKAL: Jangan hanya ganti sinonim. Ubah susunan gagasan. Mulailah kalimat dari titik tengah atau akhir gagasan asli.
-    2. VARIABEL BURSTINESS: Campurkan kalimat sangat pendek (3-5 kata) dengan kalimat kompleks. Jangan biarkan panjang kalimat seragam.
-    3. TINGKATKAN PERPLEXITY: Gunakan diksi Bahasa Indonesia yang kaya, idiomatis, dan tidak pasaran. Hindari kata-kata "robotik" seperti: secara signifikan, dalam hal ini, pada dasarnya, memberikan dampak.
-    4. GAYA MANUSIA: Sisipkan nuansa opini atau penekanan yang terasa seperti ditulis oleh ahli manusia yang memiliki perspektif unik.
-    5. JANGAN menambah informasi palsu, tapi ubahlah cara penyampaiannya 100%.
+# 2. ALGORITMA DETEKSI LOKAL (BURSTINESS)
+def local_detector_logic(text):
     """
-    variations = []
-    for _ in range(3):
-        chat_completion = client.chat.completions.create(
+    Menghitung skor AI berdasarkan variasi statistik panjang kalimat.
+    Rumus: Semakin rendah Standar Deviasi (sigma), semakin besar kemungkinan AI.
+    """
+    sentences = re.split(r'[.!?]+', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 5]
+    
+    if len(sentences) < 2:
+        return 50.0 # Data tidak cukup
+    
+    lengths = [len(s.split()) for s in sentences]
+    avg_length = sum(lengths) / len(lengths)
+    
+    # Kalkulasi Variance & Standar Deviasi
+    # LaTeX: \sigma = \sqrt{\frac{\sum (x - \bar{x})^2}{n}}
+    variance = sum((x - avg_length) ** 2 for x in lengths) / len(lengths)
+    std_dev = math.sqrt(variance)
+    
+    # Pemetaan ke Skor AI: Manusia biasanya punya std_dev > 7
+    ai_score = 100 - (std_dev * 10) 
+    return max(5.0, min(99.0, ai_score))
+
+# 3. KONEKSI API & CLOUD DETECTOR
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+HF_TOKEN = st.secrets["HF_API_KEY"]
+
+def query_cloud_detector(text):
+    """Memanggil DeBERTa-v3-Large di Hugging Face."""
+    API_URL = "https://api-inference.huggingface.co/models/Suvash/deberta-v3-large-ai-detector"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    try:
+        response = requests.post(API_URL, headers=headers, json={"inputs": text}, timeout=12)
+        if response.status_code == 503: return "LOADING"
+        if response.status_code == 200:
+            result = response.json()
+            for item in result[0]:
+                if item['label'] == 'LABEL_0': # LABEL_0 = AI Generated
+                    return item['score'] * 100
+        return None
+    except:
+        return None
+
+def get_ai_response(text, style, major, temp, feedback=""):
+    """Llama 3.3 Reconstruction Engine."""
+    system_prompt = f"""
+    Anda pakar penulisan {major}. Rekonstruksi total teks ini ke gaya {style}.
+    TUGAS UTAMA: Hancurkan pola statistik AI (Perplexity & Burstiness).
+    1. Pakai kalimat yang panjang-pendeknya sangat bervariasi.
+    2. Gunakan diksi cerdas, jangan klise/robotik.
+    3. Ubah struktur gagasan, jangan hanya ganti sinonim.
+    {feedback}
+    """
+    try:
+        chat = client.chat.completions.create(
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text}],
             model="llama-3.3-70b-versatile",
-            temperature=temp, # Gunakan temperature tinggi (0.8 - 1.0) untuk hasil terbaik
+            temperature=temp,
         )
-        variations.append(chat_completion.choices[0].message.content)
-    return variations
+        return chat.choices[0].message.content
+    except:
+        return text
 
-def mix_ai_logic(selected_texts, major):
-    combined = " --- ".join(selected_texts)
-    prompt = f"""
-    Sintesiskan teks-teks berikut menjadi satu narasi tunggal yang sangat kohesif untuk bidang {major}.
-    
-    KRITERIA KUALITAS MANUSIA:
-    1. Pastikan teks memiliki 'suara' yang konsisten tapi tidak monoton.
-    2. Hancurkan pola repetitif yang sering muncul pada draf AI.
-    3. Gunakan konjungsi antar-kalimat yang tidak kaku (hindari: 'Selain itu', 'Oleh karena itu' yang berlebihan).
-    4. Pastikan teks akhir terasa seperti ditulis oleh seorang profesional yang sedang menjelaskan ide, bukan mesin yang menyusun data.
-    """
-    chat_completion = client.chat.completions.create(
-        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": combined}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.7,
-    )
-    return chat_completion.choices[0].message.content
+# 4. UI COMPONENTS
+def colored_card(label, value, is_ai=True):
+    """Menampilkan card metrik dengan warna dinamis sesuai persentase."""
+    if value == "LOADING":
+        color, text_val = "#17a2b8", "LOADING..."
+    elif value is None:
+        color, text_val = "#6c757d", "OFFLINE"
+    else:
+        text_val = f"{value:.1f}%"
+        if is_ai: # AI Score: Rendah = Hijau
+            color = "#28a745" if value < 25 else "#ffc107; color:black;" if value < 50 else "#dc3545"
+        else: # HIR Score: Tinggi = Hijau
+            color = "#dc3545" if value < 30 else "#ffc107; color:black;" if value < 60 else "#28a745"
+            
+    st.markdown(f"""
+        <div class="metric-card" style="background-color: {color};">
+            <div style="font-size: 0.9em; opacity: 0.8;">{label}</div>
+            <div style="font-size: 1.8em; font-weight: bold;">{text_val}</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-def send_telegram(text, hir, catatan):
-    token = st.secrets["TELEGRAM_BOT_TOKEN"]
-    chat_id = st.secrets["TELEGRAM_CHAT_ID"]
-    
-    header = f"📌 **JUDUL/CATATAN:** {catatan if catatan else 'Tanpa Judul'}\n"
-    stats = f"📊 **HIR Score:** {hir:.1f}%\n"
-    isi = f"\n📝 **TEKS:**\n{text}"
-    
-    pesan_lengkap = f"📩 **HASIL AI HUMANIZER**\n\n{header}{stats}{isi}"
-    
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": pesan_lengkap, "parse_mode": "Markdown"}
-    return requests.post(url, data=payload)
-
-# 3. UI UTAMA
-st.title("🛡️ AI Humanizer: Mixer Edition")
+# 5. MAIN APP INTERFACE
+st.title("🛡️ AI Humanizer Elite v3.1")
+st.caption("Multidisciplinary IT-Psychology Tool | Surabaya 2026")
 
 with st.sidebar:
-    st.header("⚙️ Pengaturan")
-    major = st.text_input("Jurusan:", "Psikologi & IT")
-    style = st.selectbox("Gaya:", ["Formal Akademik", "Kritis & Tajam", "Naratif", "Percakapan Santai"])
-    temp = st.slider("Kreativitas", 0.5, 1.0, 0.8)
+    st.header("⚙️ Settings")
+    major = st.text_input("Jurusan/Bidang:", "Psikologi & IT")
+    style = st.selectbox("Style:", ["Kritis & Analitis", "Formal Akademik", "Naratif", "Santai"])
+    temp = st.slider("Creativity", 0.6, 1.0, 0.85)
+    st.divider()
+    target_ai = st.slider("Target AI Score (%)", 5, 40, 20)
 
-user_input = st.text_area("Tempel Teks AI Asli:", height=200)
+user_input = st.text_area("Tempel Teks AI di sini:", height=150)
 
-if st.button("🚀 Buat 3 Variasi"):
-    if user_input.strip():
-        with st.spinner("Meracik variasi..."):
-            st.session_state['results'] = get_ai_response(user_input, style, major, temp)
-    else:
-        st.error("Isi teks dulu!")
+if st.button("🚀 Start Deep Humanizing"):
+    if user_input.strip():
+        progress = st.progress(0)
+        status = st.empty()
+        
+        current_text = user_input
+        final_ai_score = 100
+        
+        # Feedback Loop Logic
+        for i in range(2):
+            status.text(f"Iterasi {i+1}: Rekonstruksi Kalimat...")
+            progress.progress(30 if i==0 else 70)
+            
+            # Tambahkan feedback jika iterasi kedua
+            fb = f"\nINFO: Teks sebelumnya terdeteksi {final_ai_score:.1f}% AI. Ganti struktur kalimatnya lebih radikal!" if i > 0 else ""
+            
+            humanized = get_ai_response(current_text, style, major, temp + (i*0.1), fb)
+            
+            # Cek Skor Cloud dulu
+            score = query_cloud_detector(humanized)
+            if score is None or score == "LOADING":
+                # Fallback ke Algoritma Lokal
+                score = local_detector_logic(humanized)
+                
+            final_ai_score = score
+            current_text = humanized
+            if isinstance(score, (int, float)) and score <= target_ai: break
+        
+        progress.progress(100)
+        status.text("✅ Selesai!")
+        
+        st.session_state['master'] = current_text
+        st.session_state['ai_score'] = final_ai_score
+    else:
+        st.error("Isi teks dulu, Andra!")
 
-# 4. TAHAP VARIASI & MIXING
-if 'results' in st.session_state:
-    st.subheader("📋 Hasil Variasi")
-    res = st.session_state['results']
-    
-    select_1 = st.checkbox("Pilih Variasi 1", value=True)
-    st.info(res[0])
-    
-    select_2 = st.checkbox("Pilih Variasi 2")
-    st.info(res[1])
-    
-    select_3 = st.checkbox("Pilih Variasi 3")
-    st.info(res[2])
+# 6. EDITOR & MONITORING
+if 'master' in st.session_state:
+    st.divider()
+    
+    # Master Editor
+    final_edit = st.text_area("🛠️ Master Editor (Edit manual untuk naikkan HIR):", 
+                              value=st.session_state['master'], height=280)
+    
+    if st.button("🔍 Re-Scan Skor"):
+        with st.spinner("Memindai ulang..."):
+            score = query_cloud_detector(final_edit)
+            st.session_state['ai_score'] = score if score else local_detector_logic(final_edit)
 
-    st.divider()
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🪄 Mix Pilihan"):
-            selected = [res[i] for i, sel in enumerate([select_1, select_2, select_3]) if sel]
-            if len(selected) >= 2:
-                with st.spinner("Menggabungkan variasi..."):
-                    st.session_state['master'] = mix_ai_logic(selected, major)
-            else:
-                st.warning("Pilih minimal 2 variasi untuk di-mix!")
-                
-    with c2:
-        if st.button("🤖 Auto-Mix Semua"):
-            with st.spinner("Mixing 3 variasi otomatis..."):
-                st.session_state['master'] = mix_ai_logic(res, major)
+    # Metrics Row
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        colored_card("DeBERTa AI Score", st.session_state['ai_score'])
+    with c2:
+        # HIR Calculation
+        hir = min((1 - ratio(st.session_state['master'], final_edit)) * 400, 100.0)
+        colored_card("Human-Input Ratio", hir, is_ai=False)
+    with c3:
+        char_count = len(final_edit)
+        char_color = "#6c757d" if char_count <= 4096 else "#dc3545"
+        st.markdown(f'<div class="metric-card" style="background-color:{char_color}">Char Count<br><b>{char_count} / 4096</b></div>', unsafe_allow_html=True)
 
-    st.divider()
-
-    # 5. MASTER EDITOR & HIR
-    st.subheader("🛠️ Master Editor")
-    final_text = st.text_area("Edit manual hasil mix di sini:", 
-                              value=st.session_state.get('master', ""), 
-                              height=300)
-
-    # --- TAMBAHAN INFO KARAKTER ---
-    char_count = len(final_text)
-    if char_count > 4096:
-        st.error(f"⚠️ Karakter: **{char_count}** / 4096 - **Batas Terlampaui!** Pesan akan gagal kirim ke Telegram.")
-    elif char_count > 3800:
-        st.warning(f"📏 Karakter: **{char_count}** / 4096 - **Hampir Penuh.**")
-    else:
-        st.caption(f"📏 Karakter: **{char_count}** / 4096")
-
-    if 'master' in st.session_state:
-        hir_score = min((1 - ratio(st.session_state['master'], final_text)) * 250, 100.0)
-        st.metric("Human-Input Ratio (HIR)", f"{hir_score:.1f}%")
-        st.progress(hir_score / 100)
-
-        st.subheader("📤 Kirim Hasil")
-        
-        st.write("Klik ikon copy di bawah:")
-        st.code(final_text, language=None)
-        
-        catatan_user = st.text_input("Judul atau Keterangan Tambahan (untuk Telegram):", 
-                                    placeholder="Contoh: Revisi Bab 1")
-        
-        if st.button("✈️ Kirim ke Telegram"):
-            if final_text.strip():
-                if char_count <= 4096:
-                    with st.spinner("Mengirim..."):
-                        response = send_telegram(final_text, hir_score, catatan_user)
-                        if response.status_code == 200:
-                            st.success("Berhasil dikirim ke Telegram!")
-                        else:
-                            st.error("Gagal kirim. Cek Secrets Telegram kamu.")
-                else:
-                    st.error("Teks terlalu panjang untuk Telegram! Kurangi hingga di bawah 4096 karakter.")
-            else:
-                st.error("Teks masih kosong!")
+    st.divider()
+    
+    # Telegram & Final Output
+    st.code(final_edit, language=None)
+    catatan = st.text_input("Label/Catatan Telegram:", placeholder="Contoh: Revisi Tugas Akhir")
+    
+    if st.button("✈️ Kirim ke Telegram"):
+        if char_count <= 4096:
+            token, cid = st.secrets["TELEGRAM_BOT_TOKEN"], st.secrets["TELEGRAM_CHAT_ID"]
+            ai_val = f"{st.session_state['ai_score']:.1f}%" if isinstance(st.session_state['ai_score'], (int, float)) else "N/A"
+            
+            msg = (f"📩 **LAPORAN AI HUMANIZER**\n"
+                   f"📌 **Judul:** {catatan if catatan else '-'}\n"
+                   f"🤖 **AI Score:** {ai_val}\n"
+                   f"📊 **HIR Score:** {hir:.1f}%\n\n"
+                   f"📝 **Teks:**\n{final_edit}")
+            
+            try:
+                res = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+                                    data={"chat_id": cid, "text": msg, "parse_mode": "Markdown"})
+                if res.status_code == 200: st.success("Terkirim!")
+                else: st.error("Gagal kirim.")
+            except: st.error("Error Koneksi Telegram.")
+        else:
+            st.error("Teks kepanjangan!")
